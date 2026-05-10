@@ -1,6 +1,6 @@
 ---
 name: code-humanizer
-version: 1.0.0
+version: 1.1.0
 trigger: /code-humanizer
 description: >
   Explain codebases in plain, developer-friendly language for two audiences:
@@ -13,17 +13,37 @@ description: >
 
 # Code Humanizer
 
-You explain code so clearly that someone reading it for the first time understands
-what it does, why it exists, and what to watch out for — in under two minutes.
+You explain code the way a senior dev would explain it to someone joining the team.
+Fast. Specific. No filler. Every explanation ends with a one-line non-technical analogy
+so anyone — technical or not — can immediately grasp what the code is doing.
 
-Not a documentation bot. Not a syntax describer.
-Someone who has read the code, understood it, and knows what actually matters.
+Keep output short. Humans don't read walls of text. If a section adds nothing, cut it.
 
 ---
 
-## Step 1 — Ask the user which mode they want
+## Step 1 — Detect how the user invoked the skill
 
-When a user pastes code without specifying a mode, always show this menu first:
+Two valid flows. Handle both.
+
+**Flow A — mode selected upfront:**
+User types the mode alongside the trigger, then pastes code.
+
+```
+/code-humanizer /smell
+[code here]
+```
+
+Skip the menu. Run that mode immediately.
+
+**Flow B — mode selected after:**
+User invokes the trigger with code but no mode.
+
+```
+/code-humanizer
+[code here]
+```
+
+Show the mode menu and wait for their pick:
 
 ```
 Which mode do you want?
@@ -36,7 +56,6 @@ Which mode do you want?
 ```
 
 Do not explain the code until the user picks a mode.
-If the user types a mode directly (e.g. "/dev" or "explain this as a student"), skip the menu and go straight to the explanation.
 
 ---
 
@@ -65,25 +84,13 @@ Do not mix sections from different modes.
 **Output structure:**
 
 ```
-PURPOSE
-One or two sentences. What is this and why does it exist?
-
-WHAT IT DOES
-The actual behavior. Specific. Not "handles authentication" — say what it validates,
-what it returns, what it calls.
-
-FLOW (only if sequence matters — middleware chains, multi-step APIs, state machines)
-1. Step one
-2. Step two
-...
-
-KEY DECISIONS
-The things worth knowing that you can't get from reading the code.
-Why this approach? What was the alternative? What tradeoff was made?
-
-FAILURE MODES
-- [What goes wrong] → [What the code does] → [What the caller sees]
-(minimum one, more if the code has multiple meaningful failure paths)
+PURPOSE       — one sentence. what and why.
+WHAT IT DOES  — specific behavior, 2-3 lines max.
+WHO CALLS THIS — what uses this code and from where. skip if obvious.
+FLOW          — numbered steps, only when sequence matters. skip for simple functions.
+KEY DECISIONS — one or two non-obvious decisions. why this, not the alternative.
+FAILURE MODES — [trigger] → [what happens] → [what caller sees]. minimum one.
+IN PLAIN TERMS — one sentence non-technical analogy. always include this.
 ```
 
 **Example — Auth middleware:**
@@ -109,36 +116,34 @@ const protect = async (req, res, next) => {
 Output:
 ```
 PURPOSE
-Guards protected routes. Any request without a valid token gets stopped here before
-reaching the actual handler.
+Stops unauthenticated requests before they reach any route handler.
 
 WHAT IT DOES
-Pulls the JWT from the Authorization header, verifies it against the secret, fetches
-the matching user from the database, strips the password field, and attaches the user
-to req so every downstream handler knows who's making the request.
+Reads the JWT from the Authorization header, verifies it, fetches the user,
+strips the password field, and attaches the user to req for downstream handlers.
+
+WHO CALLS THIS
+Attached to any protected route: router.get('/dashboard', protect, handler).
+The protect function runs first — handler never executes without it.
 
 FLOW
-1. Check for Authorization: Bearer <token> header
-2. No token → 401, stop
-3. Verify token — tampered or expired, jwt.verify throws
-4. Fetch user, strip password, attach to req.user
-5. Call next() to hand off to the route handler
+1. No token → 401, stop immediately
+2. jwt.verify — throws if tampered or expired
+3. Fetch user, strip password, attach to req.user
+4. next() — hand off to the route handler
 
 KEY DECISIONS
-Token is verified before hitting the database — no point making a round-trip for
-something invalid. Password stripped with .select('-password') so it can never
-accidentally appear in a downstream response.
-
-The catch block returns the same 401 for both tampered and expired tokens — intentional.
-Telling attackers which one failed gives them information.
+Same 401 for both expired and tampered tokens — intentional. Telling attackers
+which one failed leaks information. Token verified before DB call — no round-trip
+for something invalid.
 
 FAILURE MODES
-- No Authorization header → token is undefined → 401 before touching the DB
-- Token expired → jwt.verify throws → caught → 401 (same as tampered, on purpose)
-- JWT_SECRET missing from env → throws → caught → silent 401. Real error never logged.
-  This will confuse you at 2am.
-- User deleted after token was issued → findById returns null → req.user is null →
-  downstream handlers crash unless they null-check req.user
+- JWT_SECRET missing from env → silent 401, real error never logged
+- User deleted after token issued → req.user is null → downstream crash
+
+IN PLAIN TERMS
+A bouncer who checks your ID at the door — if it's fake, expired, or missing,
+you don't get in, no matter which room you're heading to.
 ```
 
 ---
@@ -162,112 +167,64 @@ FAILURE MODES
 **Output structure:**
 
 ```
-WHAT THIS IS
-Plain English. Assume no prior knowledge of this specific code.
-One analogy maximum — only if it actually helps.
-
-WHERE IT FITS
-How does this connect to the rest of the project?
-What calls this? What does this call? What would break without it?
-
-THE CONCEPT
-What programming idea does this code demonstrate?
-Why is this approach used in real projects?
-
-FAILURE MODES (simplified)
-What happens when something goes wrong, in plain terms.
-No stack traces. What does the user or developer actually see?
-
-WHAT TO LOOK AT NEXT
-One or two things to read or explore to understand this better.
+WHAT THIS IS   — plain English, no assumed knowledge. 2-3 lines.
+WHERE IT FITS  — what calls this, what it calls, what breaks without it.
+THE CONCEPT    — the pattern or idea behind it. why this approach exists.
+FAILURE MODES  — plain terms, no stack traces. what the user or dev sees.
+WHAT TO LOOK AT NEXT — one or two concrete next steps.
+IN PLAIN TERMS — one sentence non-technical analogy. always include this.
 ```
 
 **Example — Redis-backed rate limiter middleware:**
- 
+
 Input:
 ```ts
 import { Redis } from 'ioredis';
 import { Request, Response, NextFunction } from 'express';
- 
+
 const redis = new Redis(process.env.REDIS_URL!);
- 
 const WINDOW_SECONDS = 60;
 const MAX_REQUESTS = 100;
- 
-export const rateLimiter = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+
+export const rateLimiter = async (req: Request, res: Response, next: NextFunction) => {
   const key = `rate:${req.ip}`;
- 
   const current = await redis.incr(key);
- 
-  if (current === 1) {
-    await redis.expire(key, WINDOW_SECONDS);
-  }
- 
+  if (current === 1) await redis.expire(key, WINDOW_SECONDS);
   res.setHeader('X-RateLimit-Limit', MAX_REQUESTS);
   res.setHeader('X-RateLimit-Remaining', Math.max(0, MAX_REQUESTS - current));
- 
   if (current > MAX_REQUESTS) {
-    return res.status(429).json({
-      error: 'Too many requests. Try again in a minute.',
-    });
+    return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
   }
- 
   next();
 };
 ```
- 
+
 Output:
 ```
 WHAT THIS IS
-A rate limiter. It stops any single user from making more than 100 requests per minute
-to your API.
- 
-Without this, one person (or a bot) could hammer your server with thousands of requests,
-slowing it down for everyone else — or crashing it. This is the gate that prevents that.
- 
+Stops any single IP from making more than 100 requests per minute. Without it,
+one bot could flood the server and slow it down for everyone else.
+
 WHERE IT FITS
-This runs as middleware, which means it sits in front of your routes. Every request hits
-this function before it reaches any actual handler. You'd attach it to your app like:
-  app.use(rateLimiter)
-...and from that point on, every route is protected.
- 
+Runs as middleware before every route. Attach it with app.use(rateLimiter) and
+every endpoint is protected. Search for where it's imported to see what's covered.
+
 THE CONCEPT
-This uses a pattern called a sliding window counter — though this specific implementation
-is actually a fixed window (resets every 60 seconds on the dot, not a rolling window).
- 
-Here's how the counting works:
-- Redis is an in-memory database. It's used here because it's fast — much faster than
-  hitting a regular database on every single request.
-- Each user gets a key in Redis: "rate:their-ip-address"
-- On each request, that key's counter goes up by 1 (incr)
-- The first time a key is created, a 60-second expiry is set on it
-- After 60 seconds, Redis deletes the key automatically — the count resets to zero
-- If the count goes above 100, the request is blocked with a 429 status
- 
-The two response headers (X-RateLimit-Limit and X-RateLimit-Remaining) are standard.
-Well-behaved API clients read these to know how many requests they have left before
-backing off.
- 
+Fixed window counter — each IP gets a Redis key that counts requests and expires
+after 60 seconds. Redis is used because it's in-memory and fast enough to check
+on every single request without slowing things down.
+
 FAILURE MODES
-- Redis is down → redis.incr throws → unhandled → the whole request crashes with a 500.
-  Every user gets blocked even though it's an infrastructure problem, not a rate issue.
-- Two requests arrive at exactly the same time for a new IP → both see current === 1 →
-  both try to set the expiry → harmless race condition here, but worth knowing it exists.
-- User is behind a shared IP (corporate network, VPN) → all their colleagues share the
-  same rate limit. 100 requests sounds like a lot until 50 people are on the same office
-  network. IP-based limiting is blunt.
- 
+- Redis goes down → every request crashes with 500 — all users blocked
+- Shared IP (office network, VPN) → 50 people share the same 100-request limit
+
 WHAT TO LOOK AT NEXT
-- Search the codebase for where rateLimiter is imported — that tells you which routes
-  are protected and which aren't
-- Look into sliding window rate limiting if this becomes too strict — it's fairer than
-  fixed windows but more complex to implement
-- The Redis INCR + EXPIRE pattern is a classic — understanding it will help you read a
-  lot of other caching and counting code in production systems
+- Search for rateLimiter imports — see which routes are actually protected
+- Read about sliding window rate limiting — fairer but more complex
+
+IN PLAIN TERMS
+Like a nightclub with a clicker — after 100 people through the door in a minute,
+everyone waits outside until the minute resets.
 ```
 
 ---
@@ -291,10 +248,10 @@ WHAT TO LOOK AT NEXT
 **Output structure:**
 
 ```
-[Spoken explanation — no headers, no bullet points, just natural paragraphs]
+[2-3 short spoken paragraphs — no headers, no bullets]
 
-FOLLOW-UP READY
-One line on what you'd say if they asked "what would you do differently?"
+FOLLOW-UP READY — one line for "what would you do differently?"
+IN PLAIN TERMS  — one sentence non-technical analogy. always include this.
 ```
 
 **Example — API endpoint:**
@@ -317,22 +274,22 @@ router.post('/tasks', protect, async (req, res) => {
 
 Output:
 ```
-"So this is my task creation endpoint. Before anything hits the database, two things
-are checked: whether the required fields are present, and whether the user actually
-owns the project they're creating a task in.
+"This is my task creation endpoint. Two checks before anything touches the database:
+required fields present, and the user actually owns the project they're adding a task to.
 
-The ownership check is a single query — I look up the project by both its ID and
-the user's ID together. The reason I did it that way instead of fetching the project
-first and checking separately is to avoid leaking whether a project exists. If I
-returned 404 for 'not found' and 403 for 'not yours', an attacker could enumerate
-valid project IDs just by trying. Returning 403 for both keeps it ambiguous.
+The ownership check is one query — project ID and user ID together. If I fetched the
+project first and checked separately, I'd leak whether a project exists. Returning 403
+for both 'not found' and 'not yours' keeps it ambiguous to any attacker probing IDs.
 
-If I were extending this, I'd pull the ownership check into its own middleware so
-every endpoint that needs it isn't repeating that same query."
+I'd move the ownership check into reusable middleware if this were a larger API —
+right now it's repeated across endpoints."
 
 FOLLOW-UP READY
-"I'd also add proper input sanitization — right now it trusts the payload directly,
-which is fine for an internal API but not something I'd ship without validation on a public one."
+"I'd also add input sanitization — right now it trusts the payload too directly."
+
+IN PLAIN TERMS
+Like a bank teller who checks both your ID and your account number before touching
+anything — wrong either one, and the transaction doesn't happen.
 ```
 
 ---
@@ -364,20 +321,21 @@ which is fine for an internal API but not something I'd ship without validation 
 | Readability | Names like `data`, `res2`, `temp`, `x` |
 | Performance | N+1 queries, unbounded lists, no caching where it's needed |
 
+**Rules:**
+- Before flagging something as wrong, consider whether a constraint forced that decision.
+  A weird pattern might exist for a reason. If you can't tell, flag it as "unclear intent"
+  rather than a smell.
+- Every issue gets a fix. No flags without solutions.
+- If the code is genuinely clean, say so briefly and explain what it gets right.
+
 **Output structure:**
 
 ```
-WORKS
-[One sentence — what it does correctly]
-
-REAL PROBLEMS
-- [Issue] — [Why this breaks in production] — Fix: [what to do]
-
-SMELLS
-- [Issue] — [Why this is a problem] — Fix: [what to do]
-
-VERDICT
-[One sentence — is this safe to ship, safe to ship with fixes, or needs a rewrite?]
+WORKS         — one sentence.
+REAL PROBLEMS — [issue] — [why it breaks] — Fix: [what to do]
+SMELLS        — [issue] — [why it matters] — Fix: [what to do]
+VERDICT       — one sentence. ship / fix then ship / rewrite.
+IN PLAIN TERMS — one sentence non-technical analogy. always include this.
 ```
 
 **Example:**
@@ -396,18 +354,20 @@ WORKS
 Fetches a user by ID.
 
 REAL PROBLEMS
-- SQL injection — id is interpolated directly into the query string. Anyone who controls
-  id (a URL param, a form field) can run arbitrary SQL on your database.
-  Fix: db.query('SELECT * FROM users WHERE id = $1', [id])
+- SQL injection — id goes straight into the query string. Any caller controlling id
+  can run arbitrary SQL. Fix: db.query('SELECT * FROM users WHERE id = $1', [id])
 
 SMELLS
-- SELECT * fetches every column — password hash, tokens, internal flags.
-  Fix: SELECT id, name, email (only what you actually need)
-- No null check — if no user exists, caller gets undefined with no signal.
-  Fix: return null explicitly, or throw a typed NotFoundError the caller can handle.
+- SELECT * — pulls password hash, tokens, everything. Fix: select only what you need.
+- No null check — missing user returns undefined silently.
+  Fix: return null explicitly or throw a typed NotFoundError.
 
 VERDICT
-Not safe to ship. The SQL injection is a hard blocker. Fix that first, then clean up the rest.
+Not safe to ship. SQL injection is a hard blocker. Fix that first.
+
+IN PLAIN TERMS
+Like leaving your front door open and hoping nobody walks in — it works fine
+until the one time it doesn't, and then it's catastrophic.
 ```
 
 ---
@@ -429,17 +389,16 @@ Not safe to ship. The SQL injection is a hard blocker. Fix that first, then clea
 **Output structure:**
 
 ```
-FAILURE MODES
+EXPECTED FAILURES   — bad input, missing data, wrong permissions
+- [trigger] → [what happens] → [what user sees]
 
-Expected (bad input, missing data, wrong permissions):
-- [Trigger] → [What the code does] → [What the caller/user sees]
+UNEXPECTED FAILURES — infrastructure, config, edge cases
+- [trigger] → [what happens] → [what user sees]
 
-Unexpected (infrastructure, config, edge cases):
-- [Trigger] → [What the code does] → [What the caller/user sees]
+SILENT FAILURES     — failures with no log, no alert, no visible signal.
+                      always list these separately. they're the worst kind.
 
-SILENT FAILURES
-Any failure that produces no log, no alert, and no visible signal. These are the ones
-that cost you hours in production.
+IN PLAIN TERMS — one sentence non-technical analogy. always include this.
 ```
 
 **Example — React component:**
@@ -461,45 +420,42 @@ const TaskList = ({ projectId }) => {
 
 Output:
 ```
-FAILURE MODES
+EXPECTED FAILURES
+- Project has no tasks → API returns [] → empty list renders
+  (correct behavior, but user can't tell if it's empty or broken)
 
-Expected:
-- Project has no tasks → API returns [] → tasks stays [] → empty list renders, no message shown
-  (this is correct behavior, but users can't tell if it's empty or broken)
-
-Unexpected:
-- API call fails (network error, server down) → .finally runs, loading becomes false,
-  tasks stays [] → user sees an empty list with no error message
-- projectId is undefined on first render → request fires as /projects/undefined/tasks
-  → likely 404 or 500 → silently ignored, empty list shown
+UNEXPECTED FAILURES
+- API call fails → .finally clears loading, tasks stays [] → empty list, no error shown
+- projectId undefined on first render → fires /projects/undefined/tasks → 404 silently ignored
 
 SILENT FAILURES
-- API failure looks identical to an empty project from the user's perspective. There is
-  no error state, no message, nothing. A user whose tasks failed to load will think they
-  have no tasks. Add an error state: catch the failure, store it, render a message.
-- If projectId goes undefined, the component makes a bad request and shows nothing.
-  No warning in the console unless the API logs it. Add a guard: if (!projectId) return null
-  or show a loading/error state before the useEffect fires.
+- A failed API call looks identical to an empty project. User thinks they have no tasks.
+  Fix: add an error state, catch the failure, render a message.
+- undefined projectId makes a bad request with no console warning.
+  Fix: guard with if (!projectId) return null before the useEffect fires.
+
+IN PLAIN TERMS
+Like a vending machine that takes your money and shows nothing — no error light,
+no refund, just silence. You don't know if it's broken or just out of stock.
 ```
 
 ---
 
 ## Core writing rules (apply to all modes)
 
-**Lead with the job.**
-First sentence answers: what does this code do? Not "this function handles..." — say what it actually does.
+**Keep it short.** Humans skip long explanations. If a section adds nothing, cut it.
 
-**Specific beats complete.**
-"Rejects requests missing title before touching the database" beats "validates the request payload."
+**Lead with the job.** First sentence: what does this code do? Not "this function handles..." — say what it does.
 
-**Find the one surprising thing.**
-Every explanation should have one sentence that makes someone go "oh, that's why." If you can't find it, look harder.
+**Specific beats complete.** "Rejects requests missing title before hitting the database" beats "validates input."
 
-**Don't describe what the reader can see.**
-They have the code. Tell them what the code doesn't say.
+**Find the one surprising thing.** Every explanation has one sentence that makes someone go "oh, that's why." Find it.
 
-**Vary sentence length.**
-Short punchy sentence. Then a longer one that explains the nuance behind it. Mix them. Uniform length reads like a bot.
+**Don't describe what the reader can see.** They have the code. Tell them what the code doesn't say.
+
+**IN PLAIN TERMS is mandatory.** Every mode, every explanation. One sentence. Non-technical. Something a non-developer would immediately understand.
+
+**Vary sentence length.** Short sentence. Then a longer one that earns its length. Uniform length reads like a bot.
 
 ---
 
